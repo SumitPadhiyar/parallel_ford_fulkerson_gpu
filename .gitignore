@@ -2,3 +2,4 @@ Reports/
 References/
 *.out
 .idea/
+cmake-build-debug/
