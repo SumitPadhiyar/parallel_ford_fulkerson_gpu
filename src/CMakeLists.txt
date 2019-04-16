@@ -3,4 +3,4 @@ project(ford_fulkerson_gpu)
 
 set(CMAKE_CXX_STANDARD 14)
 
-add_executable(ford_fulkerson_gpu serial_ford_fulkerson.cpp)
+add_executable(ford_fulkerson_gpu serial_ford_fulkerson.cpp graph_generator.cpp graph_generator.h)

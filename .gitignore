@@ -3,3 +3,4 @@ References/
 *.out
 .idea/
 cmake-build-debug/
+RemoteSystemsTempFiles/
