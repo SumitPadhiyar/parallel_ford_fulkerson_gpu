@@ -4,3 +4,6 @@ References/
 .idea/
 cmake-build-debug/
 RemoteSystemsTempFiles/
+Debug/
+.cproject
+.project
