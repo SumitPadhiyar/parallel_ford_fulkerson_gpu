@@ -6,7 +6,6 @@
 
 using namespace std;
 
-
 typedef struct _Node_info{
 	u_short parent_index;
 	u_int potential_flow;
@@ -36,8 +35,6 @@ void readInput(const char* filename, u_int total_nodes, u_short* residual_capaci
 
         std::stringstream linestream(line);
         linestream >> source >> destination >> capacity;
-
-        //cout << source << "\t" << destination << "\t" << capacity << endl;
         residual_capacity[source * total_nodes + destination] = capacity;
     }
 
@@ -55,11 +52,10 @@ __global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node
 
 		Node_info *neighbour;
 		Node_info current_node_info = node_info[node_id];
-		u_int capacity;
-
-		for(int i=0; i< total_nodes; i++){
-
-			//printf("residual_capacity[%d][%d] - %hu\n", node_id, i, residual_capacity[node_id * total_nodes + i]);
+		u_int capacity, i, count = 0;
+		
+		while(++count < total_nodes){
+			i = (node_id+count) % total_nodes;	
 
 			if(frontier[i] || visited[i] || ((capacity = residual_capacity[node_id * total_nodes + i]) <= 0)){
 				continue;
@@ -67,14 +63,9 @@ __global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node
 
 			frontier[i] = true;
 
-			// put an atomic lock
 			neighbour = node_info + i;
 			neighbour->parent_index = node_id;
-			// atomicExch(&(neighbour->potential_flow), min(current_node_info.potential_flow, capacity));
 			neighbour->potential_flow =  min(current_node_info.potential_flow, capacity);
-			// printf("node_info[node_id].potential_flow, capacity - %u,%hu\n",node_info[node_id].potential_flow, capacity);
-			//printf("%d->%d, %u\n",node_id, i, neighbour->potential_flow);
-
 		}
 	}
 }
@@ -125,7 +116,6 @@ int main(int argc, char** argv){
 
 	Node_info* current_node_info;
 	u_short *d_residual_capacity;
-	//char edge_info_matrix[N][N];
 	bool* frontier, *visited;
 	bool* d_frontier, *d_visited;
 
@@ -146,24 +136,7 @@ int main(int argc, char** argv){
 		visited[i] = false;
 
 		node_info[i].potential_flow = UINT_MAX;
-
-		// for (int j = 0; j < N; ++j) {
-		// 	// edge_info_matrix[i][j] = forward;
-		// 	residual_capacity[i * N + j] = 0;
-		// }
 	}
-
-	// residual_capacity[0 * N + 1] = 3;
-	// residual_capacity[1 * N + 3] = 2;
-	// residual_capacity[1 * N + 2] = 1;
-	// residual_capacity[0 * N + 2] = 2;
-	// residual_capacity[2 * N + 3] = 3;
-
-	// edge_info_matrix[1][0] = backward;
-	// edge_info_matrix[3][1] = backward;
-	// edge_info_matrix[2][1] = backward;
-	// edge_info_matrix[2][0] = backward;
-	// edge_info_matrix[3][2] = backward;
 
 	frontier[0] = true;
 
@@ -184,18 +157,11 @@ int main(int argc, char** argv){
 
 	do{
 
-		// for (int i = 0; i < N; ++i) {
-		// 	for (int j = 0; j < N; ++j) {
-		// 		printf("residual_capacity[%d][%d] - %hu\n", i, j, residual_capacity[i * N + j]);
-		// 	}
-		// }
-
 		// reset visited, frontier, node_info
 		reset<<<blocks, threads >>>(d_node_info, d_frontier, d_visited, source, N);
 		reset_host(frontier, source, N);
 
 		while(!is_frontier_empty_or_sink_found(frontier, N, sink)){
-				//printf("is_frontier_empty_or_sink_found\n");
 				// Invoke kernel
 				find_augmenting_path<<< blocks, threads >>>(d_residual_capacity, d_node_info, d_frontier, d_visited, N, sink);
 
@@ -204,7 +170,6 @@ int main(int argc, char** argv){
 		}
 
 		found_augmenting_path = frontier[sink];
-		//printf("found_augmenting_path- %d\n", found_augmenting_path);
 
 		if(!found_augmenting_path){
 			break;
@@ -214,27 +179,12 @@ int main(int argc, char** argv){
 		cudaMemcpy(node_info, d_node_info, node_infos_size, cudaMemcpyDeviceToHost);
 
 		bottleneck_flow = node_info[sink].potential_flow;
-		//pintf("bottleneck_flow, maxflow- %u, %u\n", bottleneck_flow ,max_flow);
 		max_flow += bottleneck_flow;
-		//cout << "maxflow " << max_flow << endl;
-		//printf("maxflow- %u\n", max_flow);
 
 		for(current_vertex = sink; current_vertex != source; current_vertex = current_node_info->parent_index){
 			current_node_info = node_info + current_vertex;
 			residual_capacity[current_node_info->parent_index * N + current_vertex] -= bottleneck_flow;
 			residual_capacity[current_vertex * N + current_node_info->parent_index] += bottleneck_flow;
-
-			// if(edge_info_matrix[current_node_info.parent_index][current_vertex] == forward){
-			// 	residual_capacity[current_node_info.parent_index * N + current_vertex] -= bottleneck_flow;
-			// 	if(edge_info_matrix[current_node_info.parent_index][current_vertex] != backward){
-			// 		edge_info_matrix[current_node_info.parent_index][current_vertex] = backward;
-			// 		edge_info_changed = true;
-			// 	}
-			// 	residual_capacity[current_vertex * N + current_node_info.parent_index] += bottleneck_flow;
-			// }else{
-			// 	residual_capacity[current_vertex * N + current_node_info.parent_index] -= bottleneck_flow;
-			// 	residual_capacity[current_node_info.parent_index * N + current_vertex] += bottleneck_flow;
-			// }
 		}
 
 		// copy residual_capacity, edge_info to device
@@ -243,11 +193,9 @@ int main(int argc, char** argv){
 	}while(found_augmenting_path);
 
 	cout << "maxflow " << max_flow << endl;
-    double time_taken = ((double)clock() - start_time)/CLOCKS_PER_SEC * milliseconds; // in seconds 
-	//printf("%f ms",time_taken);
+    double time_taken = ((double)clock() - start_time)/CLOCKS_PER_SEC * milliseconds; // in milliseconds 
 	cout << time_taken << "ms" << endl;
 
-	//free(edge_info_matrix);
 	free(residual_capacity);
 	free(frontier);
 	free(visited);
