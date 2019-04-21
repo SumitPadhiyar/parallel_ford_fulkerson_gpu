@@ -96,6 +96,8 @@ public:
 
 
 int main(int argc, char **argv) {
+    auto start = chrono::high_resolution_clock::now();
+
     if (argc < 1) {
         cout << "Input Filename is required" << endl;
         return 0;
@@ -210,8 +212,6 @@ int main(int argc, char **argv) {
     file.close();
 
     int maxflow;
-
-    auto start = chrono::high_resolution_clock::now();
 
     maxflow = network.maxFlow(vertexS, vertexT);
 
