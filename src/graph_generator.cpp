@@ -60,7 +60,7 @@ void Graph_Generator::generate(int nVertices) {
             // Search for a random "new" edge every time
             // Note - In a tree the edge (a, b) is same
             // as the edge (b, a)
-            while (a == MAX_VERTICES - 1 || b == 0 || a == b || container.find(p) != container.end() ||
+            while (a == NUM - 1 || b == 0 || a == b || container.find(p) != container.end() ||
                    container.find(rev_p) != container.end()) {
                 a = rand() % NUM;
                 b = rand() % NUM;
