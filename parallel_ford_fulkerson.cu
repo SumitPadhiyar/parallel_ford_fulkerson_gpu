@@ -1,7 +1,4 @@
 #include <bits/stdc++.h>
-
-#define forward 0
-#define backward 1
 #define milliseconds 1e3
 
 using namespace std;
@@ -41,7 +38,8 @@ void readInput(const char* filename, u_int total_nodes, u_short* residual_capaci
     file.close();
 }
 
-__global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node_info, bool* frontier, bool* visited, u_int total_nodes, u_int sink){
+__global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node_info, bool* frontier, bool* visited, 
+	u_int total_nodes, u_int sink, u_int* locks){
 
 	int node_id = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -61,7 +59,12 @@ __global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node
 				continue;
 			}
 
+			if(atomicCAS(locks+i, 0 , 1) == 1 || frontier[i]){
+				continue;
+			}
+
 			frontier[i] = true;
+			locks[i] = 0;
 
 			neighbour = node_info + i;
 			neighbour->parent_index = node_id;
@@ -70,12 +73,13 @@ __global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node
 	}
 }
 
-__global__ void reset(Node_info* node_info, bool* frontier, bool* visited, int source, int total_nodes){
+__global__ void reset(Node_info* node_info, bool* frontier, bool* visited, int source, int total_nodes, u_int* locks){
 	int id = blockIdx.x * blockDim.x + threadIdx.x;
 	if(id < total_nodes){
 		frontier[id] = id == source;
 		visited[id] = false;
 		node_info[id].potential_flow = UINT_MAX;
+		locks[id] = 0; 
 	}
 }
 
@@ -97,7 +101,7 @@ bool is_frontier_empty_or_sink_found(bool* frontier, int N, int sink_pos){
 int main(int argc, char** argv){
 
 	if(argc < 3){
-		printf("Specify filename & number of verices\n");
+		printf("Specify filename & number of vertices\n");
 		return 1;
 	}
 
@@ -115,7 +119,8 @@ int main(int argc, char** argv){
 	u_int max_flow = 0;
 
 	Node_info* current_node_info;
-	u_short *d_residual_capacity;
+	u_short* d_residual_capacity;
+	u_int* d_locks;
 	bool* frontier, *visited;
 	bool* d_frontier, *d_visited;
 
@@ -140,7 +145,10 @@ int main(int argc, char** argv){
 
 	frontier[0] = true;
 
+	size_t locks_size = N * sizeof(u_int);
+
 	cudaMalloc((void **)&d_residual_capacity, matrix_size);
+	cudaMalloc((void **)&d_locks, locks_size);
 	cudaMalloc((void **)&d_node_info,node_infos_size);
 	cudaMalloc((void **)&d_frontier, vertices_size);
 	cudaMalloc((void **)&d_visited, vertices_size);
@@ -157,13 +165,13 @@ int main(int argc, char** argv){
 
 	do{
 
-		// reset visited, frontier, node_info
-		reset<<<blocks, threads >>>(d_node_info, d_frontier, d_visited, source, N);
+		// reset visited, frontier, node_info, locks
+		reset<<<blocks, threads >>>(d_node_info, d_frontier, d_visited, source, N, d_locks);
 		reset_host(frontier, source, N);
 
 		while(!is_frontier_empty_or_sink_found(frontier, N, sink)){
 				// Invoke kernel
-				find_augmenting_path<<< blocks, threads >>>(d_residual_capacity, d_node_info, d_frontier, d_visited, N, sink);
+				find_augmenting_path<<< blocks, threads >>>(d_residual_capacity, d_node_info, d_frontier, d_visited, N, sink, d_locks);
 
 				// Copy back frontier from device
 				cudaMemcpy(frontier, d_frontier, vertices_size, cudaMemcpyDeviceToHost);
@@ -192,9 +200,9 @@ int main(int argc, char** argv){
 
 	}while(found_augmenting_path);
 
-	cout << "maxflow " << max_flow << endl;
+	cout << "\nmaxflow " << max_flow << endl;
     double time_taken = ((double)clock() - start_time)/CLOCKS_PER_SEC * milliseconds; // in milliseconds 
-	cout << time_taken << "ms" << endl;
+	cout << time_taken << " ms for thread size- " << threads << endl;
 
 	free(residual_capacity);
 	free(frontier);
