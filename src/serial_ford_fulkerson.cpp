@@ -72,14 +72,14 @@ public:
                 vertexU = parent[vertexV];
                 bottleneckFlow = min(bottleneckFlow, adjacency_matrix[vertexU][vertexV]);
 
-                pathString.insert(0, to_string(vertexV));
-                pathString.insert(0, " --> ");
+//                pathString.insert(0, to_string(vertexV));
+//                pathString.insert(0, " --> ");
             }
 
-            pathString.insert(0, "S");
+//            pathString.insert(0, "S");
 
-            cout << "Augmentation path: " << pathString << "\t";
-            cout << " bottleneck (min flow on path added to max flow) = " << bottleneckFlow << endl;
+//            cout << "Augmentation path: " << pathString << "\t";
+//            cout << " bottleneck (min flow on path added to max flow) = " << bottleneckFlow << endl;
 
             for (vertexV = vertexT; vertexV != vertexS; vertexV = parent[vertexV]) {
                 vertexU = parent[vertexV];
