@@ -1,7 +1,4 @@
 #include <bits/stdc++.h>
-
-#define forward 0
-#define backward 1
 #define milliseconds 1e3
 
 using namespace std;
@@ -41,7 +38,8 @@ void readInput(const char* filename, u_int total_nodes, u_short* residual_capaci
     file.close();
 }
 
-__global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node_info, bool* frontier, bool* visited, u_int total_nodes, u_int sink){
+__global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node_info, bool* frontier, bool* visited, 
+	u_int total_nodes, u_int sink, u_int* locks){
 
 	int node_id = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -61,7 +59,12 @@ __global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node
 				continue;
 			}
 
+			if(atomicCAS(locks+i, 0 , 1) == 1 || frontier[i]){
+				continue;
+			}
+
 			frontier[i] = true;
+			locks[i] = 0;
 
 			neighbour = node_info + i;
 			neighbour->parent_index = node_id;
@@ -70,18 +73,30 @@ __global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node
 	}
 }
 
-__global__ void reset(Node_info* node_info, bool* frontier, bool* visited, int source, int total_nodes){
+__global__ void reset(Node_info* node_info, bool* frontier, bool* visited, int source, int total_nodes, u_int* locks){
 	int id = blockIdx.x * blockDim.x + threadIdx.x;
 	if(id < total_nodes){
 		frontier[id] = id == source;
 		visited[id] = false;
 		node_info[id].potential_flow = UINT_MAX;
+		locks[id] = 0; 
 	}
 }
 
-void reset_host(bool* frontier, int source, int total_nodes){
+__global__ void augment_path(Node_info* node_infos, bool* do_change_capacity , u_int total_nodes, u_short* residual_capacity, u_int bottleneck_flow){
+	int node_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if(node_id < total_nodes && do_change_capacity[node_id]){
+        Node_info* current_node_info = node_infos + node_id;
+        residual_capacity[current_node_info->parent_index * total_nodes + node_id] -= bottleneck_flow;
+        residual_capacity[node_id * total_nodes + current_node_info->parent_index] += bottleneck_flow; 
+    }    
+}
+
+
+void reset_host(bool* frontier, int source, int total_nodes, bool* do_change_capacity){
 	for (int i = 0; i < total_nodes; i++) {
 		frontier[i] = i == source;
+		do_change_capacity[i] = false;
 	}
 }
 
@@ -97,7 +112,7 @@ bool is_frontier_empty_or_sink_found(bool* frontier, int N, int sink_pos){
 int main(int argc, char** argv){
 
 	if(argc < 3){
-		printf("Specify filename & number of verices\n");
+		printf("Specify filename & number of vertices\n");
 		return 1;
 	}
 
@@ -115,9 +130,10 @@ int main(int argc, char** argv){
 	u_int max_flow = 0;
 
 	Node_info* current_node_info;
-	u_short *d_residual_capacity;
-	bool* frontier, *visited;
-	bool* d_frontier, *d_visited;
+	u_short* d_residual_capacity;
+	u_int* d_locks;
+	bool* frontier;
+	bool* d_frontier, *d_visited, *d_do_change_capacity, *do_change_capacity;
 
 	Node_info* node_info;
 	Node_info* d_node_info;
@@ -129,26 +145,20 @@ int main(int argc, char** argv){
 
 	size_t vertices_size = N * sizeof(bool);
 	frontier = (bool *)malloc(vertices_size);
-	visited = (bool *)malloc(vertices_size);
+	do_change_capacity = (bool *)malloc(vertices_size);
 
-	for (int i = 0; i < N; ++i) {
-		frontier[i] = false;
-		visited[i] = false;
-
-		node_info[i].potential_flow = UINT_MAX;
-	}
-
-	frontier[0] = true;
+	size_t locks_size = N * sizeof(u_int);
 
 	cudaMalloc((void **)&d_residual_capacity, matrix_size);
+	cudaMalloc((void **)&d_locks, locks_size);
 	cudaMalloc((void **)&d_node_info,node_infos_size);
 	cudaMalloc((void **)&d_frontier, vertices_size);
 	cudaMalloc((void **)&d_visited, vertices_size);
+	cudaMalloc((void **)&d_do_change_capacity, vertices_size);
 
 	cudaMemcpy(d_residual_capacity, residual_capacity, matrix_size, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_node_info, node_info, node_infos_size, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_frontier, frontier, vertices_size, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_visited, visited, vertices_size, cudaMemcpyHostToDevice);
 
 	bool found_augmenting_path;
 
@@ -157,13 +167,13 @@ int main(int argc, char** argv){
 
 	do{
 
-		// reset visited, frontier, node_info
-		reset<<<blocks, threads >>>(d_node_info, d_frontier, d_visited, source, N);
-		reset_host(frontier, source, N);
+		// reset visited, frontier, node_info, locks
+		reset<<<blocks, threads >>>(d_node_info, d_frontier, d_visited, source, N, d_locks);
+		reset_host(frontier, source, N, do_change_capacity);
 
 		while(!is_frontier_empty_or_sink_found(frontier, N, sink)){
 				// Invoke kernel
-				find_augmenting_path<<< blocks, threads >>>(d_residual_capacity, d_node_info, d_frontier, d_visited, N, sink);
+				find_augmenting_path<<< blocks, threads >>>(d_residual_capacity, d_node_info, d_frontier, d_visited, N, sink, d_locks);
 
 				// Copy back frontier from device
 				cudaMemcpy(frontier, d_frontier, vertices_size, cudaMemcpyDeviceToHost);
@@ -183,22 +193,21 @@ int main(int argc, char** argv){
 
 		for(current_vertex = sink; current_vertex != source; current_vertex = current_node_info->parent_index){
 			current_node_info = node_info + current_vertex;
-			residual_capacity[current_node_info->parent_index * N + current_vertex] -= bottleneck_flow;
-			residual_capacity[current_vertex * N + current_node_info->parent_index] += bottleneck_flow;
+			do_change_capacity[current_vertex] = true;
 		}
 
-		// copy residual_capacity, edge_info to device
-		cudaMemcpy(d_residual_capacity, residual_capacity, matrix_size, cudaMemcpyHostToDevice);
+		cudaMemcpy(d_do_change_capacity, do_change_capacity, vertices_size, cudaMemcpyHostToDevice);
+
+		augment_path<<< blocks, threads >>>(d_node_info, d_do_change_capacity, N, d_residual_capacity, bottleneck_flow);
 
 	}while(found_augmenting_path);
 
-	cout << "maxflow " << max_flow << endl;
+	cout << "\nmaxflow " << max_flow << endl;
     double time_taken = ((double)clock() - start_time)/CLOCKS_PER_SEC * milliseconds; // in milliseconds 
-	cout << time_taken << "ms" << endl;
+	cout << time_taken << " ms for thread size- " << threads << endl;
 
 	free(residual_capacity);
 	free(frontier);
-	free(visited);
 	free(node_info);
 
 	cudaFree(d_residual_capacity);
