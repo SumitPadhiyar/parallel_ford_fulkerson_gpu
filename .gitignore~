@@ -8,4 +8,4 @@ Debug/
 .cproject
 .project
 serial_ford_fulkerson*
-job.sh
+.gitignore

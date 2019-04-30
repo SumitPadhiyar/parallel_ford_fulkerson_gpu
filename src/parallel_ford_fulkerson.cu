@@ -50,11 +50,10 @@ __global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node
 
 		Node_info *neighbour;
 		Node_info current_node_info = node_info[node_id];
-		u_int capacity, i, count = 0;
-		
-		while(++count < total_nodes){
-			i = (node_id+count) % total_nodes;	
+		u_int capacity;
 
+		for (u_int i = node_id; i < total_nodes; ++i){
+			
 			if(frontier[i] || visited[i] || ((capacity = residual_capacity[node_id * total_nodes + i]) <= 0)){
 				continue;
 			}
@@ -68,7 +67,26 @@ __global__ void find_augmenting_path(u_short* residual_capacity, Node_info* node
 
 			neighbour = node_info + i;
 			neighbour->parent_index = node_id;
-			neighbour->potential_flow =  min(current_node_info.potential_flow, capacity);
+			neighbour->potential_flow =  min(current_node_info.potential_flow, capacity);				
+		}
+		
+
+		for (u_int i = 0; i < node_id; ++i){
+			
+			if(frontier[i] || visited[i] || ((capacity = residual_capacity[node_id * total_nodes + i]) <= 0)){
+				continue;
+			}
+
+			if(atomicCAS(locks+i, 0 , 1) == 1 || frontier[i]){
+				continue;
+			}
+
+			frontier[i] = true;
+			locks[i] = 0;
+
+			neighbour = node_info + i;
+			neighbour->parent_index = node_id;
+			neighbour->potential_flow =  min(current_node_info.potential_flow, capacity);				
 		}
 	}
 }
@@ -94,8 +112,16 @@ __global__ void augment_path(Node_info* node_infos, bool* do_change_capacity , u
 
 
 void reset_host(bool* frontier, int source, int total_nodes, bool* do_change_capacity){
-	for (int i = 0; i < total_nodes; i++) {
-		frontier[i] = i == source;
+	frontier[source] = true;
+	do_change_capacity[source] = false;
+
+	for (int i = source+1; i < total_nodes; i++) {
+		frontier[i] = false;
+		do_change_capacity[i] = false;
+	}
+
+	for (int i = 0; i < source; i++) {
+		frontier[i] = false;		
 		do_change_capacity[i] = false;
 	}
 }
@@ -157,8 +183,6 @@ int main(int argc, char** argv){
 	cudaMalloc((void **)&d_do_change_capacity, vertices_size);
 
 	cudaMemcpy(d_residual_capacity, residual_capacity, matrix_size, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_node_info, node_info, node_infos_size, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_frontier, frontier, vertices_size, cudaMemcpyHostToDevice);
 
 	bool found_augmenting_path;
 
