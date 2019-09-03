@@ -1,4 +1,4 @@
-# Parallel Ford Fulkerson on GPU
+# Parallelization of Ford Fulkerson Max flow algorithm on GPU
 This repo contains parallel and serial ford fulkerson implementation. Parallel algorithm is implemented using CUDA with compute
 capability 3.5.
 
